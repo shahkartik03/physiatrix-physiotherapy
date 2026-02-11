@@ -49,7 +49,12 @@ const Reports: React.FC = () => {
             
             // Separate paid and pending appointments
             const paidAppointments = monthAppointments.filter((apt: any) => apt.isPaid === true);
-            const pendingAppointments = monthAppointments.filter((apt: any) => apt.isPaid === false || !apt.isPaid);
+            
+            // Only count unpaid appointments from PAST dates as pending (exclude today and future)
+            const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+            const pendingAppointments = monthAppointments.filter((apt: any) => 
+                (apt.isPaid === false || !apt.isPaid) && apt.date < today
+            );
 
             // Calculate earnings for each doctor
             const doctorsWithEarnings: DoctorWithEarnings[] = doctorsData.map((doctor: any) => {
@@ -130,7 +135,7 @@ const Reports: React.FC = () => {
                         type="month"
                         value={selectedMonth}
                         onChange={(e) => setSelectedMonth(e.target.value)}
-                        className="input-field max-w-xs"
+                        className="input-field w-full md:max-w-xs"
                         disabled={loading}
                     />
                 </div>

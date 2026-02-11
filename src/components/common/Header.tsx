@@ -56,11 +56,6 @@ const Header: React.FC = () => {
                                 Logout
                             </button>
                         </nav>
-                        
-                        {/* Mobile Menu Button */}
-                        <button className="md:hidden text-primary-700">
-                            <Menu size={28} />
-                        </button>
                     </div>
                 </div>
             </header>
