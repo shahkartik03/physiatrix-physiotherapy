@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, DollarSign, Calendar, User, Loader } from 'lucide-react';
+import { TrendingUp, DollarSign, Calendar, User, Loader, Wallet, CreditCard, Banknote } from 'lucide-react';
 import { appointmentService } from '../services/appointmentService';
 import { getAllDoctors } from '../services/userService';
 
@@ -18,7 +18,10 @@ interface DoctorWithEarnings {
 }
 
 const Reports: React.FC = () => {
-    const [selectedMonth, setSelectedMonth] = useState('2026-02');
+    const [selectedMonth, setSelectedMonth] = useState(() => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    });
     const [doctors, setDoctors] = useState<DoctorWithEarnings[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -47,8 +50,11 @@ const Reports: React.FC = () => {
                 (apt: any) => apt.date && apt.date.startsWith(selectedMonth)
             );
             
-            // Separate paid and pending appointments
-            const paidAppointments = monthAppointments.filter((apt: any) => apt.isPaid === true);
+            // Only count COMPLETED appointments for earnings (not just paid)
+            // This ensures pre-paid package sessions are only counted when treatment is done
+            const completedAppointments = monthAppointments.filter(
+                (apt: any) => apt.status === 'completed' && apt.isPaid === true
+            );
             
             // Only count unpaid appointments from PAST dates as pending (exclude today and future)
             const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
@@ -56,9 +62,25 @@ const Reports: React.FC = () => {
                 (apt.isPaid === false || !apt.isPaid) && apt.date < today
             );
 
+            console.log('📊 PENDING APPOINTMENTS BREAKDOWN:', {
+                today,
+                selectedMonth,
+                totalPendingAppointments: pendingAppointments.length,
+                appointments: pendingAppointments.map((apt: any) => ({
+                    date: apt.date,
+                    patient: apt.patientName,
+                    doctor: apt.doctorName,
+                    amount: apt.amount,
+                    status: apt.status,
+                    isPaid: apt.isPaid,
+                    treatment: apt.treatmentType
+                })),
+                totalPendingAmount: pendingAppointments.reduce((sum: number, apt: any) => sum + apt.amount, 0)
+            });
+
             // Calculate earnings for each doctor
             const doctorsWithEarnings: DoctorWithEarnings[] = doctorsData.map((doctor: any) => {
-                const doctorPaidAppointments = paidAppointments.filter(
+                const doctorPaidAppointments = completedAppointments.filter(
                     (apt: any) => apt.doctorId === doctor.uid
                 );
                 const doctorPendingAppointments = pendingAppointments.filter(
@@ -67,6 +89,13 @@ const Reports: React.FC = () => {
 
                 const total = doctorPaidAppointments.reduce((sum: number, apt: any) => sum + apt.amount, 0);
                 const pending = doctorPendingAppointments.reduce((sum: number, apt: any) => sum + apt.amount, 0);
+                
+                // Calculate cash and UPI collections
+                const cashAppointments = doctorPaidAppointments.filter((apt: any) => apt.paymentMode === 'cash');
+                const upiAppointments = doctorPaidAppointments.filter((apt: any) => apt.paymentMode === 'upi');
+                const cashCollection = cashAppointments.reduce((sum: number, apt: any) => sum + apt.amount, 0);
+                const upiCollection = upiAppointments.reduce((sum: number, apt: any) => sum + apt.amount, 0);
+                
                 const commissionRate = (doctor as any).commissionRate || 0;
                 const commission = Math.round(total * (commissionRate / 100));
                 const net = total - commission;
@@ -87,6 +116,14 @@ const Reports: React.FC = () => {
                         amount: pending,
                         count: doctorPendingAppointments.length,
                     },
+                    cash: {
+                        amount: cashCollection,
+                        count: cashAppointments.length,
+                    },
+                    upi: {
+                        amount: upiCollection,
+                        count: upiAppointments.length,
+                    },
                 } as any;
             });
 
@@ -106,6 +143,8 @@ const Reports: React.FC = () => {
     const totalRevenue = doctors.reduce((sum, doc) => sum + doc.earnings.total, 0);
     const totalPending = doctors.reduce((sum, doc: any) => sum + (doc.pending?.amount || 0), 0);
     const totalCommission = doctors.reduce((sum, doc) => sum + doc.earnings.commission, 0);
+    const totalCashCollection = doctors.reduce((sum, doc: any) => sum + (doc.cash?.amount || 0), 0);
+    const totalUpiCollection = doctors.reduce((sum, doc: any) => sum + (doc.upi?.amount || 0), 0);
     const adminDoctor = doctors.find(doc => doc.isAdmin);
     const adminNetEarnings = adminDoctor ? adminDoctor.earnings.net : 0;
     const totalEarnings = adminNetEarnings + totalCommission;
@@ -150,7 +189,7 @@ const Reports: React.FC = () => {
                 {/* Summary Cards */}
                 {!loading && (
                     <>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                     <div className="card bg-gradient-to-br from-green-500 to-green-600 text-white">
                         <TrendingUp size={24} className="mb-2" />
                         <p className="text-sm opacity-90">Paid Revenue</p>
@@ -161,15 +200,30 @@ const Reports: React.FC = () => {
                         <p className="text-sm opacity-90">Pending</p>
                         <p className="text-3xl font-bold">₹{totalPending.toLocaleString()}</p>
                     </div>
-                    <div className="card bg-gradient-to-br from-blue-500 to-blue-600 text-white">
-                        <DollarSign size={24} className="mb-2" />
-                        <p className="text-sm opacity-90">Total Commission</p>
-                        <p className="text-3xl font-bold">₹{totalCommission.toLocaleString()}</p>
-                    </div>
                     <div className="card bg-gradient-to-br from-purple-500 to-purple-600 text-white">
                         <TrendingUp size={24} className="mb-2" />
                         <p className="text-sm opacity-90">Net Earnings</p>
                         <p className="text-3xl font-bold">₹{totalEarnings.toLocaleString()}</p>
+                    </div>
+                </div>
+
+                {/* Payment Mode Breakdown */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div className="card bg-gradient-to-br from-emerald-500 to-emerald-600 text-white">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Banknote size={24} />
+                            <h3 className="text-lg font-semibold">Cash Collection</h3>
+                        </div>
+                        <p className="text-3xl font-bold mb-1">₹{totalCashCollection.toLocaleString()}</p>
+                        <p className="text-sm opacity-90">{Math.round((totalCashCollection / totalRevenue) * 100) || 0}% of total revenue</p>
+                    </div>
+                    <div className="card bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+                        <div className="flex items-center gap-2 mb-2">
+                            <CreditCard size={24} />
+                            <h3 className="text-lg font-semibold">UPI Collection</h3>
+                        </div>
+                        <p className="text-3xl font-bold mb-1">₹{totalUpiCollection.toLocaleString()}</p>
+                        <p className="text-sm opacity-90">{Math.round((totalUpiCollection / totalRevenue) * 100) || 0}% of total revenue</p>
                     </div>
                 </div>
 
@@ -201,7 +255,7 @@ const Reports: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-4 gap-3 pt-4 border-t">
+                                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-4 border-t">
                                     <div className="text-center">
                                         <p className="text-xs text-gray-600 mb-1">Paid Appts</p>
                                         <p className="text-lg font-bold text-gray-800">{doctor.earnings.count}</p>
@@ -211,8 +265,16 @@ const Reports: React.FC = () => {
                                         <p className="text-lg font-bold text-green-600">₹{doctor.earnings.total.toLocaleString()}</p>
                                     </div>
                                     <div className="text-center border-l">
-                                        <p className="text-xs text-gray-600 mb-1">Commission</p>
-                                        <p className="text-lg font-bold text-blue-600">₹{doctor.earnings.commission.toLocaleString()}</p>
+                                        <p className="text-xs text-emerald-600 mb-1 flex items-center justify-center gap-1">
+                                            <Banknote size={12} /> Cash
+                                        </p>
+                                        <p className="text-lg font-bold text-emerald-600">₹{(doctor.cash?.amount || 0).toLocaleString()}</p>
+                                    </div>
+                                    <div className="text-center border-l">
+                                        <p className="text-xs text-blue-600 mb-1 flex items-center justify-center gap-1">
+                                            <CreditCard size={12} /> UPI
+                                        </p>
+                                        <p className="text-lg font-bold text-blue-600">₹{(doctor.upi?.amount || 0).toLocaleString()}</p>
                                     </div>
                                     <div className="text-center border-l">
                                         <p className="text-xs text-orange-600 mb-1">Pending</p>

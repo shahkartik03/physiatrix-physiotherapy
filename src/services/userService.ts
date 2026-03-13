@@ -12,6 +12,7 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, collection, getDocs, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { auditService } from './auditService';
 
 export interface DoctorProfile {
   uid: string;
@@ -83,6 +84,14 @@ export const createDoctorAccount = async (doctorData: {
     }
     
     await setDoc(doc(db, 'doctors', newUser.uid), doctorProfile);
+    
+    // Log audit
+    await auditService.log({
+      collection: 'doctors',
+      documentId: newUser.uid,
+      documentName: doctorData.name,
+      action: 'created'
+    });
     
     // Send password reset email only if requested (default: false for backward compatibility)
     const shouldSendEmail = doctorData.sendEmail === true;
@@ -245,6 +254,15 @@ export const updateDoctorProfile = async (
     const doctorRef = doc(db, 'doctors', uid);
     await updateDoc(doctorRef, updates);
     
+    // Log audit
+    await auditService.log({
+      collection: 'doctors',
+      documentId: uid,
+      documentName: updates.name,
+      action: 'updated',
+      changes: updates as any
+    });
+    
     console.log('✅ Doctor profile updated:', uid);
     
     return {
@@ -268,6 +286,14 @@ export const deactivateDoctorAccount = async (uid: string): Promise<{ success: b
   try {
     const doctorRef = doc(db, 'doctors', uid);
     await updateDoc(doctorRef, { isActive: false });
+    
+    // Log audit
+    await auditService.log({
+      collection: 'doctors',
+      documentId: uid,
+      action: 'updated',
+      changes: { isActive: { old: true, new: false } }
+    });
     
     console.log('⚠️ Doctor account deactivated:', uid);
     

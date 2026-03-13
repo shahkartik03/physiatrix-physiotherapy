@@ -35,6 +35,14 @@ const Login: React.FC = () => {
             
             const doctorData = doctorSnap.data();
             
+            // Debug: Log what we're fetching from Firestore
+            console.log('🔍 DEBUG - Fetched doctor data:', {
+                uid: user.uid,
+                name: doctorData.name,
+                email: doctorData.email,
+                isAdmin: doctorData.isAdmin
+            });
+            
             // Check if account is active
             if (doctorData.isActive === false) {
                 setError('Your account has been deactivated. Please contact admin.');
@@ -49,6 +57,8 @@ const Login: React.FC = () => {
             localStorage.setItem('userId', user.uid);
             localStorage.setItem('userName', doctorData.name);
             localStorage.setItem('isAuthenticated', 'true');
+            
+            console.log('✅ Stored in localStorage - userName:', doctorData.name);
             
             // Console log for future WhatsApp integration
             console.log('🔐 Login Event: User logged in', { 

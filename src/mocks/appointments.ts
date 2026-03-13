@@ -2,16 +2,31 @@ export interface Appointment {
   id: string;
   patientId: string;
   patientName: string;
+  phone?: string; // Patient phone number for reminders
   doctorId: string;
   doctorName: string;
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
-  status: 'pending' | 'completed' | 'cancelled' | 'no-show';
+  status: 'pending' | 'completed' | 'cancelled' | 'no-show' | 'scheduled';
   treatmentType: string;
   amount: number;
   isPaid: boolean;
   notes?: string;
   createdAt: string;
+  
+  // Reminder tracking fields
+  reminderSent?: boolean;
+  reminderSentAt?: string; // ISO timestamp
+  reminderSentBy?: string; // userId who sent it
+  reminderSentByName?: string; // userName who sent it
+  reminderMethod?: 'whatsapp' | 'sms' | 'call'; // Method used for reminder
+  
+  // Package session fields (existing)
+  isPrePaid?: boolean;
+  packageId?: string;
+  isPackageSession?: boolean;
+  sessionNumber?: number;
+  paymentMode?: 'cash' | 'upi';
 }
 
 export const appointments: Appointment[] = [

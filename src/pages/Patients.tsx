@@ -1,30 +1,39 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Phone, Mail, Calendar, User, Clock, X, Loader, DollarSign } from 'lucide-react';
+import { Users, UserPlus, Phone, Mail, Calendar, User, Clock, X, Loader, DollarSign, Package, History } from 'lucide-react';
 import { Patient } from '../mocks/patients';
 import { patientService } from '../services/patientService';
 import { appointmentService } from '../services/appointmentService';
+import { getPatientActivePackages } from '../services/packageService';
+import TreatmentPackageForm from '../components/scheduling/TreatmentPackageForm';
+import Modal from '../components/common/Modal';
+import type { TreatmentPackage, Appointment } from '../types';
 
 interface PatientWithStats extends Patient {
     appointmentCount: number;
     totalCharges: number;
     pendingCharges: number;
+    activePackages?: TreatmentPackage[];
 }
 
 const Patients: React.FC = () => {
     const [showAddModal, setShowAddModal] = useState(false);
     const [showAppointmentModal, setShowAppointmentModal] = useState(false);
+    const [showPackageModal, setShowPackageModal] = useState(false);
+    const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+    const [appointmentHistory, setAppointmentHistory] = useState<Appointment[]>([]);
+    const [loadingHistory, setLoadingHistory] = useState(false);
     const [patients, setPatients] = useState<PatientWithStats[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [actionType, setActionType] = useState<'appointment' | 'package' | null>(null);
     const [appointmentData, setAppointmentData] = useState({
         selectedDates: [] as string[],
         currentDate: '',
         appointmentTime: '',
         treatmentType: '',
-        amount: '',
     });
     const [formData, setFormData] = useState({
         name: '',
@@ -39,7 +48,6 @@ const Patients: React.FC = () => {
         currentDate: '',
         appointmentTime: '',
         treatmentType: '',
-        amount: '',
     });
 
     useEffect(() => {
@@ -52,11 +60,13 @@ const Patients: React.FC = () => {
             setError('');
             const fetchedPatients = await patientService.getAll();
             
-            // Fetch appointments for each patient
+            // Fetch appointments and packages for each patient
             const patientsWithStats = await Promise.all(
                 (fetchedPatients as any[]).map(async (patient: Patient) => {
                     try {
                         const appointments = await appointmentService.getByPatientId(patient.id);
+                        const activePackages = await getPatientActivePackages(patient.id);
+                        
                         const totalCharges = appointments.reduce((sum, apt: any) => sum + (apt.amount || 0), 0);
                         const pendingCharges = appointments
                             .filter((apt: any) => !apt.isPaid)
@@ -67,14 +77,16 @@ const Patients: React.FC = () => {
                             appointmentCount: appointments.length,
                             totalCharges,
                             pendingCharges,
+                            activePackages,
                         } as PatientWithStats;
                     } catch (err) {
-                        console.error(`Error fetching appointments for patient ${patient.id}:`, err);
+                        console.error(`Error fetching data for patient ${patient.id}:`, err);
                         return {
                             ...patient,
                             appointmentCount: 0,
                             totalCharges: 0,
                             pendingCharges: 0,
+                            activePackages: [],
                         } as PatientWithStats;
                     }
                 })
@@ -133,9 +145,9 @@ const Patients: React.FC = () => {
                         providerId: userId, // For compatibility with types
                         date: date,
                         time: formData.appointmentTime,
-                        status: 'pending' as const,
+                        status: 'scheduled' as const,
                         treatmentType: formData.treatmentType || 'General Consultation',
-                        amount: Number(formData.amount) || 0,
+                        amount: 0, // Amount will be set when appointment is completed
                         isPaid: false,
                         notes: 'Walk-in patient',
                         createdAt: new Date().toISOString(),
@@ -177,7 +189,6 @@ const Patients: React.FC = () => {
                 currentDate: '',
                 appointmentTime: '',
                 treatmentType: '',
-                amount: '',
             });
             setSubmitting(false);
             setShowAddModal(false);
@@ -203,14 +214,51 @@ const Patients: React.FC = () => {
 
     const handleScheduleAppointment = (patient: Patient) => {
         setSelectedPatient(patient);
+        setActionType('appointment');
         setAppointmentData({
             selectedDates: [],
             currentDate: '',
             appointmentTime: '',
             treatmentType: '',
-            amount: '',
         });
         setShowAppointmentModal(true);
+    };
+
+    const handleCreatePackage = (patient: Patient) => {
+        setSelectedPatient(patient);
+        setActionType('package');
+        setShowPackageModal(true);
+    };
+
+    const handleViewAppointmentHistory = async (patient: Patient) => {
+        setSelectedPatient(patient);
+        setShowHistoryModal(true);
+        setLoadingHistory(true);
+        try {
+            const appointments = await appointmentService.getByPatientId(patient.id);
+            // Filter for completed appointments only and sort by date (most recent first)
+            const completedAppointments = appointments
+                .filter(apt => apt.status === 'completed')
+                .sort((a, b) => {
+                    const dateA = new Date(a.date + ' ' + a.time);
+                    const dateB = new Date(b.date + ' ' + b.time);
+                    return dateB.getTime() - dateA.getTime();
+                });
+            setAppointmentHistory(completedAppointments);
+        } catch (err) {
+            console.error('Error loading appointment history:', err);
+            setAppointmentHistory([]);
+        } finally {
+            setLoadingHistory(false);
+        }
+    };
+
+    const handlePackageCreated = (packageId: string) => {
+        setShowPackageModal(false);
+        setSelectedPatient(null);
+        setActionType(null);
+        loadPatients();
+        alert('Treatment package created successfully!');
     };
 
     const handleAddDate = () => {
@@ -259,6 +307,25 @@ const Patients: React.FC = () => {
         setError('');
 
         try {
+            // Check for existing appointments on the selected dates
+            const patientAppointments = await appointmentService.getByPatientId(selectedPatient.id);
+            const existingDates = patientAppointments
+                .filter(apt => apt.status !== 'cancelled' && apt.status !== 'canceled')
+                .map(apt => apt.date);
+            
+            const conflictingDates = appointmentData.selectedDates.filter(date => 
+                existingDates.includes(date)
+            );
+            
+            if (conflictingDates.length > 0) {
+                const datesList = conflictingDates.map(date => 
+                    new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                ).join(', ');
+                alert(`${selectedPatient.name} already has appointment(s) on: ${datesList}\n\nPlease remove these dates or choose different ones.`);
+                setSubmitting(false);
+                return;
+            }
+            
             const userId = localStorage.getItem('userId') || '';
             const userName = localStorage.getItem('userName') || 'Doctor';
             
@@ -272,9 +339,9 @@ const Patients: React.FC = () => {
                     providerId: userId, // For compatibility with types
                     date: date,
                     time: appointmentData.appointmentTime,
-                    status: 'pending' as const,
+                    status: 'scheduled' as const,
                     treatmentType: appointmentData.treatmentType || 'General Consultation',
-                    amount: Number(appointmentData.amount) || 0,
+                    amount: 0, // Amount will be set when appointment is completed
                     isPaid: false,
                     notes: '',
                     createdAt: new Date().toISOString(),
@@ -371,15 +438,20 @@ const Patients: React.FC = () => {
                         {filteredPatients.map(patient => (
                         <div 
                             key={patient.id} 
-                            onClick={() => handleScheduleAppointment(patient)}
-                            className="card hover:shadow-lg transition-all cursor-pointer"
+                            className="card hover:shadow-lg transition-all flex flex-col"
                         >
                             <div className="flex items-start gap-3 mb-3">
                                 <div className="bg-accent-100 p-2 rounded-lg flex-shrink-0">
                                     <User className="text-accent-600" size={20} />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <h3 className="font-bold text-gray-900 truncate">{patient.name}</h3>
+                                    <h3 
+                                        className="font-bold text-gray-900 truncate cursor-pointer hover:text-blue-600 transition-colors"
+                                        onClick={() => handleViewAppointmentHistory(patient)}
+                                        title="Click to view appointment history"
+                                    >
+                                        {patient.name}
+                                    </h3>
                                     <p className="text-xs text-gray-500">{patient.gender} • {new Date(patient.dateOfBirth).toLocaleDateString()}</p>
                                 </div>
                             </div>
@@ -398,6 +470,26 @@ const Patients: React.FC = () => {
                                     <p className="text-xs text-gray-500 line-clamp-2">{patient.address}</p>
                                 )}
                             </div>
+                            
+                            {/* Active Packages */}
+                            {patient.activePackages && patient.activePackages.length > 0 && (
+                                <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Package size={14} className="text-green-600" />
+                                        <span className="text-xs font-semibold text-green-800">
+                                            {patient.activePackages.length} Active Package{patient.activePackages.length > 1 ? 's' : ''}
+                                        </span>
+                                    </div>
+                                    {patient.activePackages.map(pkg => (
+                                        <div key={pkg.id} className="text-xs text-green-700 mt-1">
+                                            <div className="flex justify-between">
+                                                <span className="font-medium">{pkg.packageName}</span>
+                                                <span>{pkg.remainingSessions}/{pkg.totalSessions} left</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                             
                             {/* Appointment Stats */}
                             {patient.appointmentCount > 0 && (
@@ -419,9 +511,41 @@ const Patients: React.FC = () => {
                                     )}
                                 </div>
                             )}
-                            <div className="w-full mt-3 bg-accent-500 text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-2">
-                                <Calendar size={16} />
-                                Schedule Appointment
+                            
+                            {/* Action Buttons */}
+                            <div className="grid grid-cols-2 gap-2 mt-auto pt-3">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleScheduleAppointment(patient);
+                                    }}
+                                    disabled={patient.activePackages && patient.activePackages.length > 0}
+                                    className={`bg-blue-600 hover:bg-blue-700 text-white px-3 py-2.5 rounded-lg font-semibold text-sm inline-flex items-center justify-center gap-2 transition-all shadow-sm hover:shadow-md h-10
+                                        ${patient.activePackages && patient.activePackages.length > 0
+                                            ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                                            : 'bg-teal-600 hover:bg-teal-700 text-white'}`}
+                                >
+                                    <Calendar size={16} className="flex-shrink-0" />
+                                    <span>Appointment</span>
+                                </button>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!patient.activePackages || patient.activePackages.length === 0) {
+                                            handleCreatePackage(patient);
+                                        }
+                                    }}
+                                    disabled={patient.activePackages && patient.activePackages.length > 0}
+                                    className={`px-3 py-2.5 rounded-lg font-semibold text-sm inline-flex items-center justify-center gap-2 transition-all shadow-sm hover:shadow-md h-10 ${
+                                        patient.activePackages && patient.activePackages.length > 0
+                                            ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                                            : 'bg-teal-600 hover:bg-teal-700 text-white'
+                                    }`}
+                                    title={patient.activePackages && patient.activePackages.length > 0 ? 'Patient already has an active package' : 'Create a new package'}
+                                >
+                                    <Package size={16} className="flex-shrink-0" />
+                                    <span>Package</span>
+                                </button>
                             </div>
                         </div>
                     ))}
@@ -500,14 +624,13 @@ const Patients: React.FC = () => {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs font-medium text-gray-700 mb-1">
-                                        Date of Birth *
+                                        Date of Birth (Optional)
                                     </label>
                                     <input
                                         type="date"
                                         value={formData.dateOfBirth}
                                         onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
                                         className="input-field"
-                                        required
                                     />
                                 </div>
 
@@ -654,21 +777,10 @@ const Patients: React.FC = () => {
                                                     required={formData.scheduleAppointment}
                                                 />
                                             </div>
-
-                                            <div>
-                                                <label className="block text-xs font-medium text-gray-700 mb-1">
-                                                    Amount (₹) *
-                                                </label>
-                                                <input
-                                                    type="number"
-                                                    value={formData.amount}
-                                                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                                                    className="input-field text-sm"
-                                                    placeholder="500"
-                                                    required={formData.scheduleAppointment}
-                                                />
-                                            </div>
                                         </div>
+                                        <p className="text-xs text-gray-500 mt-2">
+                                            💡 Payment amount will be collected when marking the appointment as complete
+                                        </p>
                                     </div>
                                 )}
                             </div>
@@ -819,20 +931,9 @@ const Patients: React.FC = () => {
                                     placeholder="General Consultation"
                                     required
                                 />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Amount (₹) *
-                                </label>
-                                <input
-                                    type="number"
-                                    value={appointmentData.amount}
-                                    onChange={(e) => setAppointmentData({ ...appointmentData, amount: e.target.value })}
-                                    className="input-field"
-                                    placeholder="500"
-                                    required
-                                />
+                                <p className="text-xs text-gray-500 mt-2">
+                                    💡 Payment amount will be collected when marking the appointment as complete
+                                </p>
                             </div>
 
                             <div className="flex gap-3 pt-4">
@@ -867,6 +968,157 @@ const Patients: React.FC = () => {
                         </form>
                     </div>
                 </div>
+            )}
+            
+            {/* Create Package Modal */}
+            {showPackageModal && selectedPatient && (
+                <Modal isOpen={showPackageModal} onClose={() => {
+                    setShowPackageModal(false);
+                    setSelectedPatient(null);
+                    setActionType(null);
+                }} title="Create Package">
+                    <TreatmentPackageForm
+                        preSelectedPatientId={selectedPatient.id}
+                        preSelectedPatientName={selectedPatient.name}
+                        onSuccess={handlePackageCreated}
+                        onCancel={() => {
+                            setShowPackageModal(false);
+                            setSelectedPatient(null);
+                            setActionType(null);
+                        }}
+                    />
+                </Modal>
+            )}
+
+            {/* Appointment History Modal */}
+            {showHistoryModal && selectedPatient && (
+                <Modal 
+                    isOpen={showHistoryModal} 
+                    onClose={() => {
+                        setShowHistoryModal(false);
+                        setSelectedPatient(null);
+                        setAppointmentHistory([]);
+                    }} 
+                    title={`Completed Appointments - ${selectedPatient.name}`}
+                >
+                    <div className="max-h-[70vh] overflow-y-auto">
+                        {loadingHistory ? (
+                            <div className="flex justify-center items-center py-12">
+                                <Loader className="animate-spin text-primary-600" size={36} />
+                            </div>
+                        ) : appointmentHistory.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500">
+                                <Calendar className="mx-auto mb-3 text-gray-400" size={48} />
+                                <p>No completed appointments found for this patient</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {appointmentHistory.map((appointment) => {
+                                    const appointmentDate = new Date(appointment.date);
+                                    const isUpcoming = appointmentDate >= new Date(new Date().toDateString());
+                                    const isPast = appointmentDate < new Date(new Date().toDateString());
+                                    
+                                    let statusColor = 'bg-gray-100 text-gray-700';
+                                    let statusText = appointment.status;
+                                    
+                                    if (appointment.status === 'completed') {
+                                        statusColor = 'bg-green-100 text-green-700';
+                                    } else if (appointment.status === 'cancelled' || appointment.status === 'canceled') {
+                                        statusColor = 'bg-red-100 text-red-700';
+                                        statusText = 'cancelled';
+                                    } else if (appointment.status === 'no-show') {
+                                        statusColor = 'bg-orange-100 text-orange-700';
+                                    } else if (appointment.status === 'pending' || appointment.status === 'scheduled') {
+                                        statusColor = isUpcoming ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700';
+                                    }
+                                    
+                                    return (
+                                        <div 
+                                            key={appointment.id} 
+                                            className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                                        >
+                                            <div className="flex items-start justify-between mb-2">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <Calendar className="text-gray-600" size={16} />
+                                                        <span className="font-semibold text-gray-900">
+                                                            {appointmentDate.toLocaleDateString('en-US', { 
+                                                                weekday: 'short',
+                                                                month: 'short',
+                                                                day: 'numeric',
+                                                                year: 'numeric'
+                                                            })}
+                                                        </span>
+                                                        <Clock className="text-gray-600 ml-2" size={16} />
+                                                        <span className="text-gray-700">{appointment.time}</span>
+                                                    </div>
+                                                    {appointment.treatmentType && (
+                                                        <p className="text-sm text-gray-600 ml-6">
+                                                            {appointment.treatmentType}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColor} capitalize`}>
+                                                    {statusText}
+                                                </span>
+                                            </div>
+                                            
+                                            {appointment.doctorName && (
+                                                <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                                                    <User size={14} />
+                                                    <span>Dr. {appointment.doctorName}</span>
+                                                </div>
+                                            )}
+                                            
+                                            {appointment.amount !== undefined && appointment.amount > 0 && (
+                                                <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                                                    <div className="flex items-center gap-2">
+                                                        <DollarSign size={14} className="text-green-600" />
+                                                        <span className="font-semibold text-gray-900">₹{appointment.amount}</span>
+                                                        {appointment.isPaid ? (
+                                                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                                                                Paid
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                                                                Unpaid
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {appointment.paymentMode && (
+                                                        <span className="text-xs text-gray-500 capitalize">
+                                                            {appointment.paymentMode}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                            
+                                            {appointment.isPackageSession && (
+                                                <div className="mt-2 pt-2 border-t border-gray-100">
+                                                    <div className="flex items-center gap-2 text-xs text-purple-700">
+                                                        <Package size={12} />
+                                                        <span>Package Session {appointment.sessionNumber}</span>
+                                                        {appointment.isPrePaid && (
+                                                            <span className="bg-purple-100 px-2 py-0.5 rounded-full">
+                                                                Pre-paid
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
+                                            {appointment.notes && (
+                                                <div className="mt-2 pt-2 border-t border-gray-100">
+                                                    <p className="text-xs text-gray-600 italic">"{appointment.notes}"</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </Modal>
             )}
         </main>
     );

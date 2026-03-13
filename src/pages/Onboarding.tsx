@@ -220,7 +220,7 @@ const Onboarding: React.FC = () => {
                                 <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
                                 <input
                                     type="number"
-                                    value={formData.commissionRate}
+                                    value={formData.commissionRate === '' ? '' : formData.commissionRate}
                                     onChange={(e) => setFormData({ ...formData, commissionRate: e.target.value })}
                                     className="input-field input-with-icon"
                                     placeholder="15"

@@ -18,15 +18,15 @@ const PaymentModeSelector: React.FC<PaymentModeSelectorProps> = ({ selectedMode,
             <label className="block text-sm font-medium text-gray-700 mb-2">
                 Payment Mode <span className="text-red-500">*</span>
             </label>
-            <div className="flex gap-3">
+            <div className="grid grid-cols-2 gap-3">
                 <button
                     type="button"
                     onClick={() => onChange('cash')}
                     style={buttonStyle(selectedMode === 'cash')}
-                    className="flex-1 py-3 px-4 rounded-lg border-2 transition-all font-medium flex items-center justify-center shadow-sm hover:shadow"
+                    className="py-2.5 px-4 rounded-lg border-2 transition-colors font-medium inline-flex items-center justify-center"
                 >
                     <Wallet 
-                        size={20} 
+                        size={18} 
                         className="mr-2 flex-shrink-0" 
                         style={{ color: selectedMode === 'cash' ? '#ffffff' : '#374151' }} 
                     />
@@ -36,10 +36,10 @@ const PaymentModeSelector: React.FC<PaymentModeSelectorProps> = ({ selectedMode,
                     type="button"
                     onClick={() => onChange('upi')}
                     style={buttonStyle(selectedMode === 'upi')}
-                    className="flex-1 py-3 px-4 rounded-lg border-2 transition-all font-medium flex items-center justify-center shadow-sm hover:shadow"
+                    className="py-2.5 px-4 rounded-lg border-2 transition-colors font-medium inline-flex items-center justify-center"
                 >
                     <DollarSign 
-                        size={20} 
+                        size={18} 
                         className="mr-2 flex-shrink-0" 
                         style={{ color: selectedMode === 'upi' ? '#ffffff' : '#374151' }} 
                     />

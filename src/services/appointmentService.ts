@@ -10,6 +10,7 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  getDocsFromServer,
   getDoc,
   query,
   where,
@@ -21,6 +22,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Appointment } from '../types';
+import { auditService } from './auditService';
+import { completePackageSession } from './packageService';
 
 const COLLECTION_NAME = 'appointments';
 
@@ -30,13 +33,30 @@ export const appointmentService = {
    * @param appointmentData - Appointment details
    * @returns Promise with the new appointment ID
    */
-  create: async (appointmentData: Omit<Appointment, 'id'>): Promise<string> => {
+  create: async (appointmentData: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> => {
     try {
+      // Get current user info for audit trail
+      const userId = localStorage.getItem('userId') || 'unknown';
+      const userName = localStorage.getItem('userName') || 'Unknown User';
+      
       const docRef = await addDoc(collection(db, COLLECTION_NAME), {
         ...appointmentData,
+        createdBy: appointmentData.createdBy || userId,
+        createdByName: appointmentData.createdByName || userName,
+        updatedBy: appointmentData.updatedBy || userId,
+        updatedByName: appointmentData.updatedByName || userName,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
       });
+      
+      // Log audit
+      await auditService.log({
+        collection: 'appointments',
+        documentId: docRef.id,
+        documentName: `${appointmentData.patientName} - ${appointmentData.date}`,
+        action: 'created'
+      });
+      
       return docRef.id;
     } catch (error) {
       console.error('Error creating appointment:', error);
@@ -54,6 +74,8 @@ export const appointmentService = {
     try {
       const today = new Date().toISOString().split('T')[0];
       
+      console.log('🔍 getTodayAppointments QUERY:', { doctorId, isAdmin, today });
+      
       const constraints: QueryConstraint[] = [
         where('date', '==', today)
       ];
@@ -69,11 +91,15 @@ export const appointmentService = {
         orderBy('time', 'asc')
       );
       
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({
+      const snapshot = await getDocsFromServer(q);
+      const appointments = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       } as Appointment));
+      
+      console.log('📋 getTodayAppointments RESULTS:', appointments.length, 'appointments');
+      
+      return appointments;
     } catch (error) {
       console.error('Error fetching today appointments:', error);
       throw new Error('Failed to fetch appointments');
@@ -105,7 +131,7 @@ export const appointmentService = {
         orderBy('time', 'asc')
       );
       
-      const snapshot = await getDocs(q);
+      const snapshot = await getDocsFromServer(q);
       return snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
@@ -113,6 +139,96 @@ export const appointmentService = {
     } catch (error) {
       console.error('Error fetching upcoming appointments:', error);
       throw new Error('Failed to fetch upcoming appointments');
+    }
+  },
+
+  /**
+   * Get pending closure appointments (past scheduled appointments needing action)
+   * @param doctorId - Current doctor's ID
+   * @param isAdmin - Whether the user is admin
+   * @returns Promise with array of appointments
+   */
+  getPendingClosure: async (doctorId: string, isAdmin: boolean): Promise<Appointment[]> => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Query for both 'pending' and 'scheduled' statuses to catch all incomplete appointments
+      const constraints: QueryConstraint[] = [
+        where('status', 'in', ['pending', 'scheduled'])
+      ];
+      
+      if (!isAdmin && doctorId) {
+        constraints.push(where('doctorId', '==', doctorId));
+      }
+      
+      const q = query(
+        collection(db, COLLECTION_NAME),
+        ...constraints
+      );
+      
+      const snapshot = await getDocsFromServer(q);
+      const allIncomplete = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Appointment));
+      
+      // Filter for past dates client-side and sort
+      const pastIncomplete = allIncomplete
+        .filter(apt => apt.date < today)
+        .sort((a, b) => {
+          const dateCompare = b.date.localeCompare(a.date);
+          if (dateCompare !== 0) return dateCompare;
+          return b.time.localeCompare(a.time);
+        });
+      
+      return pastIncomplete;
+    } catch (error) {
+      console.error('Error fetching pending closure appointments:', error);
+      throw new Error('Failed to fetch pending closure appointments');
+    }
+  },
+
+  /**
+   * Get past issues (past scheduled + no-shows)
+   * @param doctorId - Current doctor's ID
+   * @param isAdmin - Whether the user is admin
+   * @returns Promise with array of appointments
+   */
+  getPastIssues: async (doctorId: string, isAdmin: boolean): Promise<Appointment[]> => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      const constraints: QueryConstraint[] = [];
+      
+      if (!isAdmin && doctorId) {
+        constraints.push(where('doctorId', '==', doctorId));
+      }
+      
+      const q = constraints.length > 0
+        ? query(collection(db, COLLECTION_NAME), ...constraints)
+        : query(collection(db, COLLECTION_NAME));
+      
+      const snapshot = await getDocs(q);
+      const allAppointments = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Appointment));
+      
+      // Filter for past appointments with pending, scheduled or no-show status client-side and sort
+      const pastIssues = allAppointments
+        .filter(apt => 
+          (apt.status === 'pending' || apt.status === 'scheduled' || apt.status === 'no-show') && apt.date < today
+        )
+        .sort((a, b) => {
+          const dateCompare = b.date.localeCompare(a.date);
+          if (dateCompare !== 0) return dateCompare;
+          return b.time.localeCompare(a.time);
+        });
+      
+      return pastIssues;
+    } catch (error) {
+      console.error('Error fetching past issues:', error);
+      throw new Error('Failed to fetch past issues');
     }
   },
 
@@ -231,10 +347,32 @@ export const appointmentService = {
     updates: Partial<Appointment>
   ): Promise<void> => {
     try {
-      const docRef = doc(db, COLLECTION_NAME, appointmentId);
-      await updateDoc(docRef, {
+      const userId = localStorage.getItem('userId') || 'unknown';
+      const userName = localStorage.getItem('userName') || 'Unknown User';
+      
+      const updateData = {
         ...updates,
+        updatedBy: userId,
+        updatedByName: userName,
         updatedAt: Timestamp.now()
+      };
+      
+      console.log('💾 UPDATING APPOINTMENT IN FIRESTORE:', {
+        appointmentId,
+        updates: updateData
+      });
+      
+      const docRef = doc(db, COLLECTION_NAME, appointmentId);
+      await updateDoc(docRef, updateData);
+      
+      console.log('✅ FIRESTORE UPDATE COMPLETED');
+      
+      // Log audit
+      await auditService.log({
+        collection: 'appointments',
+        documentId: appointmentId,
+        action: 'updated',
+        changes: updates as any
       });
     } catch (error) {
       console.error('Error updating appointment:', error);
@@ -258,12 +396,17 @@ export const appointmentService = {
     }
   ): Promise<void> => {
     try {
+      const userId = localStorage.getItem('userId') || 'unknown';
+      const userName = localStorage.getItem('userName') || 'Unknown User';
+      
       const docRef = doc(db, COLLECTION_NAME, appointmentId);
       await updateDoc(docRef, {
         status: 'completed',
         paymentStatus: 'paid',
         ...paymentData,
         completedAt: Timestamp.now(),
+        updatedBy: userId,
+        updatedByName: userName,
         updatedAt: Timestamp.now()
       });
     } catch (error) {
@@ -280,12 +423,28 @@ export const appointmentService = {
    */
   cancel: async (appointmentId: string, reason?: string): Promise<void> => {
     try {
+      const userId = localStorage.getItem('userId') || 'unknown';
+      const userName = localStorage.getItem('userName') || 'Unknown User';
+      
       const docRef = doc(db, COLLECTION_NAME, appointmentId);
       await updateDoc(docRef, {
         status: 'cancelled',
         cancellationReason: reason || '',
         cancelledAt: Timestamp.now(),
+        updatedBy: userId,
+        updatedByName: userName,
         updatedAt: Timestamp.now()
+      });
+      
+      // Log audit
+      await auditService.log({
+        collection: 'appointments',
+        documentId: appointmentId,
+        action: 'status_changed',
+        changes: { 
+          status: { old: 'scheduled', new: 'cancelled' },
+          reason: { old: '', new: reason || '' }
+        }
       });
     } catch (error) {
       console.error('Error cancelling appointment:', error);
@@ -300,10 +459,23 @@ export const appointmentService = {
    */
   markNoShow: async (appointmentId: string): Promise<void> => {
     try {
+      const userId = localStorage.getItem('userId') || 'unknown';
+      const userName = localStorage.getItem('userName') || 'Unknown User';
+      
       const docRef = doc(db, COLLECTION_NAME, appointmentId);
       await updateDoc(docRef, {
         status: 'no-show',
+        updatedBy: userId,
+        updatedByName: userName,
         updatedAt: Timestamp.now()
+      });
+      
+      // Log audit
+      await auditService.log({
+        collection: 'appointments',
+        documentId: appointmentId,
+        action: 'status_changed',
+        changes: { status: { old: 'scheduled', new: 'no-show' } }
       });
     } catch (error) {
       console.error('Error marking no-show:', error);
@@ -320,6 +492,13 @@ export const appointmentService = {
     try {
       const docRef = doc(db, COLLECTION_NAME, appointmentId);
       await deleteDoc(docRef);
+      
+      // Log audit
+      await auditService.log({
+        collection: 'appointments',
+        documentId: appointmentId,
+        action: 'deleted'
+      });
     } catch (error) {
       console.error('Error deleting appointment:', error);
       throw new Error('Failed to delete appointment');
@@ -496,19 +675,272 @@ export const appointmentService = {
     notes?: string
   ): Promise<void> => {
     try {
+      const userId = localStorage.getItem('userId') || 'unknown';
+      const userName = localStorage.getItem('userName') || 'Unknown User';
+      
+      // First, get the appointment to check if it's a package session
       const docRef = doc(db, COLLECTION_NAME, appointmentId);
-      await updateDoc(docRef, {
+      const appointmentDoc = await getDoc(docRef);
+      
+      if (!appointmentDoc.exists()) {
+        throw new Error('Appointment not found');
+      }
+      
+      const appointmentData = appointmentDoc.data() as Appointment;
+      
+      // Prepare update data
+      const updateData: any = {
         status: 'completed',
         isPaid: true,
         paymentMode,
         paidAmount: amount,
         paymentNotes: notes || '',
         completedAt: Timestamp.now(),
+        updatedBy: userId,
+        updatedByName: userName,
         updatedAt: Timestamp.now()
+      };
+      
+      // For package sessions, DO NOT modify the amount field
+      // It should always reflect the service value (pricePerSession) for accurate reporting
+      // For regular appointments, update amount to reflect actual payment collected
+      if (!appointmentData.isPackageSession) {
+        updateData.amount = amount;
+      }
+      
+      // Update the appointment as completed and paid
+      await updateDoc(docRef, updateData);
+      
+      // If this is a package session, update the package's completed/remaining sessions
+      if (appointmentData.packageId && appointmentData.isPackageSession) {
+        console.log('📦 Updating package session:', {
+          packageId: appointmentData.packageId,
+          appointmentId,
+          sessionNumber: appointmentData.sessionNumber
+        });
+        
+        await completePackageSession(appointmentData.packageId, appointmentId);
+        console.log('✅ Package session updated successfully');
+      }
+      
+      // Log audit
+      await auditService.log({
+        collection: 'appointments',
+        documentId: appointmentId,
+        action: 'payment_received',
+        changes: { 
+          status: { old: 'scheduled', new: 'completed' },
+          paymentMode: { old: '', new: paymentMode },
+          amount: { old: 0, new: amount }
+        }
       });
     } catch (error) {
       console.error('Error marking appointment as paid:', error);
       throw new Error('Failed to mark appointment as paid');
+    }
+  },
+
+  /**
+   * Complete a prepaid package session without overwriting the amount field
+   * This preserves the service value (pricePerSession) for accurate reporting
+   * @param appointmentId - Appointment ID to complete
+   */
+  completePackageSessionWithoutPayment: async (
+    appointmentId: string
+  ): Promise<void> => {
+    try {
+      const userId = localStorage.getItem('userId') || 'unknown';
+      const userName = localStorage.getItem('userName') || 'Unknown User';
+      
+      // Get the appointment to verify it's a package session
+      const docRef = doc(db, COLLECTION_NAME, appointmentId);
+      const appointmentDoc = await getDoc(docRef);
+      
+      if (!appointmentDoc.exists()) {
+        throw new Error('Appointment not found');
+      }
+      
+      const appointmentData = appointmentDoc.data() as Appointment;
+      
+      if (!appointmentData.packageId || !appointmentData.isPackageSession) {
+        throw new Error('This function is only for package sessions');
+      }
+      
+      // Update the appointment as completed - DO NOT modify amount field
+      // The amount field should already contain pricePerSession from when it was scheduled
+      await updateDoc(docRef, {
+        status: 'completed',
+        isPaid: true,
+        completedAt: Timestamp.now(),
+        updatedBy: userId,
+        updatedByName: userName,
+        updatedAt: Timestamp.now()
+      });
+      
+      // Update the package's completed/remaining sessions
+      console.log('📦 Completing prepaid package session:', {
+        packageId: appointmentData.packageId,
+        appointmentId,
+        sessionNumber: appointmentData.sessionNumber
+      });
+      
+      await completePackageSession(appointmentData.packageId, appointmentId);
+      console.log('✅ Package session completed successfully');
+      
+      // Log audit
+      await auditService.log({
+        collection: 'appointments',
+        documentId: appointmentId,
+        action: 'status_changed',
+        changes: { 
+          status: { old: 'scheduled', new: 'completed' }
+        }
+      });
+    } catch (error) {
+      console.error('Error completing prepaid package session:', error);
+      throw new Error('Failed to complete prepaid package session');
+    }
+  },
+
+  /**
+   * Get all appointments for a specific package
+   * @param packageId - Treatment package ID
+   * @returns Promise with array of appointments
+   */
+  getByPackageId: async (packageId: string): Promise<Appointment[]> => {
+    try {
+      const q = query(
+        collection(db, COLLECTION_NAME),
+        where('packageId', '==', packageId),
+        orderBy('date', 'asc')
+      );
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Appointment));
+    } catch (error) {
+      console.error('Error fetching package appointments:', error);
+      throw new Error('Failed to fetch package appointments');
+    }
+  },
+
+  /**
+   * Check if an appointment is from a package
+   * @param appointmentId - Appointment ID
+   * @returns Promise with boolean indicating if it's a package appointment
+   */
+  isPackageAppointment: async (appointmentId: string): Promise<boolean> => {
+    try {
+      const appointment = await appointmentService.getById(appointmentId);
+      return !!(appointment && appointment.packageId && appointment.isPackageSession);
+    } catch (error) {
+      console.error('Error checking if appointment is from package:', error);
+      return false;
+    }
+  },
+
+  /**
+   * Get package appointments by status
+   * @param packageId - Treatment package ID
+   * @param status - Appointment status
+   * @returns Promise with array of appointments
+   */
+  getPackageAppointmentsByStatus: async (
+    packageId: string,
+    status: string
+  ): Promise<Appointment[]> => {
+    try {
+      const q = query(
+        collection(db, COLLECTION_NAME),
+        where('packageId', '==', packageId),
+        where('status', '==', status),
+        orderBy('date', 'asc')
+      );
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Appointment));
+    } catch (error) {
+      console.error('Error fetching package appointments by status:', error);
+      throw new Error('Failed to fetch package appointments');
+    }
+  },
+
+  /**
+   * Get all package sessions (appointments marked as package sessions)
+   * @param doctorId - Current doctor's ID
+   * @param isAdmin - Whether the user is admin
+   * @returns Promise with array of package appointments
+   */
+  getAllPackageSessions: async (
+    doctorId: string,
+    isAdmin: boolean
+  ): Promise<Appointment[]> => {
+    try {
+      const constraints: QueryConstraint[] = [
+        where('isPackageSession', '==', true)
+      ];
+      
+      if (!isAdmin) {
+        constraints.push(where('doctorId', '==', doctorId));
+      }
+      
+      const q = query(
+        collection(db, COLLECTION_NAME),
+        ...constraints,
+        orderBy('date', 'desc')
+      );
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Appointment));
+    } catch (error) {
+      console.error('Error fetching package sessions:', error);
+      throw new Error('Failed to fetch package sessions');
+    }
+  },
+
+  /**
+   * Get non-package (single) appointments
+   * @param doctorId - Current doctor's ID
+   * @param isAdmin - Whether the user is admin
+   * @returns Promise with array of single appointments
+   */
+  getSingleAppointments: async (
+    doctorId: string,
+    isAdmin: boolean
+  ): Promise<Appointment[]> => {
+    try {
+      const constraints: QueryConstraint[] = [];
+      
+      if (!isAdmin) {
+        constraints.push(where('doctorId', '==', doctorId));
+      }
+      
+      const q = constraints.length > 0
+        ? query(collection(db, COLLECTION_NAME), ...constraints, orderBy('date', 'desc'))
+        : query(collection(db, COLLECTION_NAME), orderBy('date', 'desc'));
+      
+      const snapshot = await getDocs(q);
+      
+      // Filter out package appointments (those without packageId or isPackageSession === false)
+      const appointments = snapshot.docs
+        .map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as Appointment))
+        .filter(apt => !apt.packageId && !apt.isPackageSession);
+      
+      return appointments;
+    } catch (error) {
+      console.error('Error fetching single appointments:', error);
+      throw new Error('Failed to fetch single appointments');
     }
   }
 };

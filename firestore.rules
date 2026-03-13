@@ -7,98 +7,10 @@ service cloud.firestore {
       return request.auth != null;
     }
     
-    // Helper function to check if user is admin
-    function isAdmin() {
-      return isAuthenticated() && 
-        get(/databases/$(database)/documents/doctors/$(request.auth.uid)).data.isAdmin == true;
-    }
-    
-    // Helper function to check if user is the doctor
-    function isDoctor(doctorId) {
-      return isAuthenticated() && request.auth.uid == doctorId;
-    }
-    
-    // Doctors collection
-    match /doctors/{doctorId} {
-      // Anyone authenticated can read doctor info
-      allow read: if isAuthenticated();
-      
-      // Admins can create doctors, OR users can create their own profile (for initial setup)
-      allow create: if isAdmin() || (isAuthenticated() && request.auth.uid == doctorId);
-      allow update: if isAdmin() || isDoctor(doctorId);
-      allow delete: if isAdmin();
-    }
-    
-    // Patients collection
-    match /patients/{patientId} {
-      // Any authenticated user can read/write patients
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      
-      // Only admins can delete patients
-      allow delete: if isAdmin();
-    }
-    
-    // Appointments collection
-    match /appointments/{appointmentId} {
-      // Doctors can read their own appointments, admins can read all
-      allow read: if isAuthenticated();
-      
-      // Any authenticated user can create appointments
-      allow create: if isAuthenticated();
-      
-      // Doctors can update their own appointments, admins can update all
-      allow update: if isAuthenticated() && 
-        (isAdmin() || isDoctor(resource.data.doctorId));
-      
-      // Only admins can delete appointments
-      allow delete: if isAdmin();
-    }
-    
-    // Payments collection
-    match /payments/{paymentId} {
-      // Doctors can read their own payments, admins can read all
-      allow read: if isAuthenticated();
-      
-      // Any authenticated user can create payments
-      allow create: if isAuthenticated();
-      
-      // Doctors can update their own payments, admins can update all
-      allow update: if isAuthenticated() && 
-        (isAdmin() || isDoctor(resource.data.doctorId));
-      
-      // Only admins can delete payments
-      allow delete: if isAdmin();
-    }
-    
-    // Medical Records collection
-    match /medicalRecords/{recordId} {
-      // Any authenticated user can read/write medical records
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      
-      // Only admins can delete medical records
-      allow delete: if isAdmin();
-    }
-    
-    // Notifications collection
-    match /notifications/{notificationId} {
-      // Users can only read their own notifications
-      allow read: if isAuthenticated() && 
-        request.auth.uid == resource.data.userId;
-      
-      // Any authenticated user can create notifications
-      allow create: if isAuthenticated();
-      
-      // Users can update their own notifications (mark as read)
-      allow update: if isAuthenticated() && 
-        request.auth.uid == resource.data.userId;
-      
-      // Users can delete their own notifications
-      allow delete: if isAuthenticated() && 
-        request.auth.uid == resource.data.userId;
+    // Allow all authenticated users full access to all collections
+    // No restrictions on which doctor created/owns the resource
+    match /{document=**} {
+      allow read, write: if isAuthenticated();
     }
   }
 }

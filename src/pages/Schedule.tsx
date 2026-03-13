@@ -9,13 +9,14 @@ const Schedule: React.FC = () => {
     const userRole = localStorage.getItem('userRole') || 'doctor';
     const [filterDate, setFilterDate] = useState<string>('all');
     const [filterDoctor, setFilterDoctor] = useState<string>('all');
+    const [filterView, setFilterView] = useState<'upcoming' | 'past-issues' | 'all'>('upcoming');
     const [doctorAppointments, setDoctorAppointments] = useState<Appointment[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
     useEffect(() => {
         loadAppointments();
-    }, [userId, userRole]);
+    }, [userId, userRole, filterView]);
 
     const loadAppointments = async () => {
         try {
@@ -23,13 +24,22 @@ const Schedule: React.FC = () => {
             setError('');
             const isAdmin = userRole === 'admin';
             
-            const appointments = await appointmentService.getAll(userId, isAdmin);
+            let appointments;
+            const today = new Date().toISOString().split('T')[0];
             
-            // Filter to only show today and future appointments
-            const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-            const todayAndFuture = appointments.filter((apt: any) => apt.date >= today);
+            if (filterView === 'upcoming') {
+                // Show today and future appointments
+                const allAppointments = await appointmentService.getAll(userId, isAdmin);
+                appointments = allAppointments.filter((apt: any) => apt.date >= today);
+            } else if (filterView === 'past-unclosed') {
+                // Show past scheduled appointments and no-shows
+                appointments = await appointmentService.getPastIssues(userId, isAdmin);
+            } else {
+                // Show all appointments
+                appointments = await appointmentService.getAll(userId, isAdmin);
+            }
             
-            setDoctorAppointments(todayAndFuture);
+            setDoctorAppointments(appointments as any);
         } catch (err: any) {
             console.error('Error loading appointments:', err);
             // Only show error if it's a real Firebase/network error, not just empty data
@@ -74,16 +84,16 @@ const Schedule: React.FC = () => {
     const finalSortedDates = Object.keys(finalGrouped).sort();
 
     return (
-        <main className="min-h-screen bg-gray-50 pb-24 md:pb-8">
-            <div className="container mx-auto px-4 py-6">
-                <div className="mb-6">
+        <main className="h-screen flex flex-col bg-gray-50 pb-24 md:pb-8">
+            <div className="w-full max-w-full px-4 py-4 flex flex-col h-full overflow-hidden">
+                <div className="mb-3 flex-shrink-0">
                     <h1 className="text-2xl md:text-3xl font-bold text-primary-800">Schedule View</h1>
                     <p className="text-gray-600 mt-1">{userRole === 'admin' ? 'All appointments across doctors' : 'Your appointments'}</p>
                 </div>
 
                 {/* Error Message */}
                 {error && (
-                    <div className="card bg-red-50 border-2 border-red-200 mb-6">
+                    <div className="card bg-red-50 border-2 border-red-200 mb-4 flex-shrink-0">
                         <p className="text-red-700 text-sm">{error}</p>
                     </div>
                 )}
@@ -98,12 +108,28 @@ const Schedule: React.FC = () => {
                 {/* Filters */}
                 {!loading && (
                     <>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 flex-shrink-0">
+                    {/* View Filter - Always shown */}
+                    <div className="card p-3">
+                        <div className="flex items-center gap-2 mb-1.5">
+                            <Filter size={16} className="text-gray-600" />
+                            <span className="font-semibold text-gray-700 text-sm">View</span>
+                        </div>
+                        <select
+                            value={filterView}
+                            onChange={(e) => setFilterView(e.target.value as any)}
+                            className="input-field"
+                        >
+                            <option value="upcoming">Today & Upcoming</option>
+                            <option value="past-unclosed">Past Issues & No-Shows</option>
+                            <option value="all">All Appointments</option>
+                        </select>
+                    </div>
                     {userRole === 'admin' && (
-                        <div className="card">
-                            <div className="flex items-center gap-2 mb-2">
-                                <User size={20} className="text-gray-600" />
-                                <span className="font-semibold text-gray-700">Filter by Doctor</span>
+                        <div className="card p-3">
+                            <div className="flex items-center gap-2 mb-1.5">
+                                <User size={16} className="text-gray-600" />
+                                <span className="font-semibold text-gray-700 text-sm">Filter by Doctor</span>
                             </div>
                             <select
                                 value={filterDoctor}
@@ -117,10 +143,10 @@ const Schedule: React.FC = () => {
                             </select>
                         </div>
                     )}
-                    <div className="card">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Filter size={20} className="text-gray-600" />
-                        <span className="font-semibold text-gray-700">Filter by Date</span>
+                    <div className="card p-3">
+                    <div className="flex items-center gap-2 mb-1.5">
+                        <Filter size={16} className="text-gray-600" />
+                        <span className="font-semibold text-gray-700 text-sm">Date</span>
                     </div>
                     <select
                                 value={filterDate}
@@ -142,14 +168,24 @@ const Schedule: React.FC = () => {
                         </div>
                     </div>
 
-                {/* Appointments by Date */}
+                {/* Alert for Past Issues View */}
+                {filterView === 'past-unclosed' && doctorAppointments.length > 0 && (
+                    <div className="card bg-red-50 border-2 border-red-200 mb-4 p-3 flex-shrink-0">
+                        <p className="text-xs text-red-800">
+                            <strong>⚠️ Past Issues:</strong> Showing past appointments that are unclosed (scheduled) and no-shows. Go to Dashboard to take action on unclosed appointments.
+                        </p>
+                    </div>
+                )}
+
+                {/* Scrollable Appointments Section */}
+                <div className="flex-1 overflow-y-auto pr-1 -mr-1">
                 {finalSortedDates
                     .filter(date => filterDate === 'all' || date === filterDate)
                     .map(date => (
-                        <div key={date} className="mb-5">
-                            <div className="flex items-center gap-2 mb-2">
-                                <Calendar size={18} className="text-primary-600" />
-                                <h2 className="text-base font-bold text-primary-800">
+                        <div key={date} className="mb-3">
+                            <div className="flex items-center gap-2 mb-2 sticky top-0 bg-gray-50 py-1 z-10">
+                                <Calendar size={16} className="text-primary-600" />
+                                <h2 className="text-sm font-bold text-primary-800">
                                     {new Date(date).toLocaleDateString('en-US', { 
                                         weekday: 'long', 
                                         month: 'short', 
@@ -157,7 +193,7 @@ const Schedule: React.FC = () => {
                                     })}
                                 </h2>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            <div className="grid gap-3 w-full" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 280px))' }}>
                                 {finalGrouped[date]
                                     .sort((a, b) => a.time.localeCompare(b.time))
                                     .map(appointment => (
@@ -180,6 +216,7 @@ const Schedule: React.FC = () => {
                         <p className="text-gray-500">No appointments scheduled</p>
                     </div>
                 )}
+                </div>
                 </>
                 )}
             </div>

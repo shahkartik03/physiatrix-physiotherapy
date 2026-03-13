@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Patient } from '../types';
+import { auditService } from './auditService';
 
 const COLLECTION_NAME = 'patients';
 
@@ -36,6 +37,15 @@ export const patientService = {
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
       });
+      
+      // Log audit
+      await auditService.log({
+        collection: 'patients',
+        documentId: docRef.id,
+        documentName: patientData.name,
+        action: 'created'
+      });
+      
       return docRef.id;
     } catch (error) {
       console.error('Error creating patient:', error);
@@ -163,6 +173,15 @@ export const patientService = {
         ...updates,
         updatedAt: Timestamp.now()
       });
+      
+      // Log audit
+      await auditService.log({
+        collection: 'patients',
+        documentId: patientId,
+        documentName: updates.name,
+        action: 'updated',
+        changes: updates as any
+      });
     } catch (error) {
       console.error('Error updating patient:', error);
       throw new Error('Failed to update patient');
@@ -252,6 +271,13 @@ export const patientService = {
     try {
       const docRef = doc(db, COLLECTION_NAME, patientId);
       await deleteDoc(docRef);
+      
+      // Log audit
+      await auditService.log({
+        collection: 'patients',
+        documentId: patientId,
+        action: 'deleted'
+      });
     } catch (error) {
       console.error('Error deleting patient:', error);
       throw new Error('Failed to delete patient');

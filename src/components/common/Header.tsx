@@ -46,9 +46,11 @@ const Header: React.FC = () => {
                             <Link to="/patients" className="text-gray-700 hover:text-accent-500 font-medium transition-colors">Patients</Link>
                             {userRole === 'admin' && (
                                 <>
+                                    <Link to="/reminders" className="text-gray-700 hover:text-accent-500 font-medium transition-colors">Reminders</Link>
                                     <Link to="/schedule" className="text-gray-700 hover:text-accent-500 font-medium transition-colors">View Schedule</Link>
                                     <Link to="/onboarding" className="text-gray-700 hover:text-accent-500 font-medium transition-colors">Doctor Onboarding</Link>
                                     <Link to="/reports" className="text-gray-700 hover:text-accent-500 font-medium transition-colors">Earnings Report</Link>
+                                    <Link to="/audit-logs" className="text-gray-700 hover:text-accent-500 font-medium transition-colors">Audit Logs</Link>
                                 </>
                             )}
                             <button onClick={handleLogout} className="flex items-center gap-2 text-gray-700 hover:text-red-500 font-medium transition-colors">

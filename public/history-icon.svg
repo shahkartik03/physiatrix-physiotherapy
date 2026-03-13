@@ -1,0 +1,37 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Outer ring -->
+  <circle cx="64" cy="64" r="56" stroke="#F59E0B" stroke-width="8" fill="none"/>
+  
+  <!-- Middle ring with gradient effect -->
+  <circle cx="64" cy="64" r="44" fill="#FCD34D"/>
+  <circle cx="64" cy="64" r="44" fill="url(#grad1)"/>
+  
+  <!-- Inner clock face -->
+  <circle cx="64" cy="64" r="28" fill="white"/>
+  
+  <!-- Clock tick marks -->
+  <rect x="62" y="40" width="4" height="8" fill="#D1D5DB" rx="2"/>
+  <rect x="84" y="62" width="8" height="4" fill="#D1D5DB" rx="2"/>
+  <rect x="62" y="84" width="4" height="8" fill="#D1D5DB" rx="2"/>
+  <rect x="40" y="62" width="8" height="4" fill="#D1D5DB" rx="2"/>
+  
+  <!-- Clock hands -->
+  <rect x="62" y="48" width="4" height="16" fill="#4B5563" rx="2"/>
+  <rect x="62" y="64" width="4" height="12" fill="#4B5563" rx="2" transform="rotate(45 64 64)"/>
+  
+  <!-- Arrow indicator at bottom with circle -->
+  <circle cx="64" cy="100" r="16" fill="white" stroke="#E5E7EB" stroke-width="2"/>
+  <path d="M72 100L60 100L60 94L54 100L60 106L60 100Z" fill="#F59E0B"/>
+  
+  <!-- Curved arrow on left bottom -->
+  <path d="M32 88L28 96L36 96Z" fill="#F59E0B"/>
+  <path d="M36 96C36 96 28 92 24 84C20 76 20 68 24 60" stroke="#F59E0B" stroke-width="6" stroke-linecap="round"/>
+  
+  <!-- Gradients -->
+  <defs>
+    <linearGradient id="grad1" x1="64" y1="20" x2="64" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FCD34D" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#F97316" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+</svg>

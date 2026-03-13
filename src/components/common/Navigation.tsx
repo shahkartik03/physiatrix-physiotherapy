@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Calendar, Users, UserPlus, LogOut, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, Calendar, Users, UserPlus, LogOut, TrendingUp, Database, Bell } from 'lucide-react';
 
 const Navigation: React.FC = () => {
     const location = useLocation();
@@ -42,6 +42,17 @@ const Navigation: React.FC = () => {
                     <>
                         <li className="flex-shrink-0">
                             <Link 
+                                to="/reminders" 
+                                className={`flex flex-col items-center gap-1 py-2 px-3 transition-colors ${
+                                    isActive('/reminders') ? 'text-accent-500' : 'text-gray-600'
+                                }`}
+                            >
+                                <Bell size={22} />
+                                <span className="text-xs font-medium">Reminders</span>
+                            </Link>
+                        </li>
+                        <li className="flex-shrink-0">
+                            <Link 
                                 to="/schedule" 
                                 className={`flex flex-col items-center gap-1 py-2 px-3 transition-colors ${
                                     isActive('/schedule') ? 'text-accent-500' : 'text-gray-600'
@@ -71,6 +82,17 @@ const Navigation: React.FC = () => {
                             >
                                 <TrendingUp size={22} />
                                 <span className="text-xs font-medium">Reports</span>
+                            </Link>
+                        </li>
+                        <li className="flex-shrink-0">
+                            <Link 
+                                to="/audit-logs" 
+                                className={`flex flex-col items-center gap-1 py-2 px-3 transition-colors ${
+                                    isActive('/audit-logs') ? 'text-accent-500' : 'text-gray-600'
+                                }`}
+                            >
+                                <Database size={22} />
+                                <span className="text-xs font-medium">Audit</span>
                             </Link>
                         </li>
                     </>

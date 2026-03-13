@@ -82,7 +82,7 @@ Stores patient information.
 ---
 
 ### 3. **appointments**
-Stores all appointment records.
+Stores all appointment records (both single treatments and package sessions).
 
 ```typescript
 {
@@ -97,7 +97,7 @@ Stores all appointment records.
   treatmentType: string;         // Back Pain Treatment, Consultation, etc.
   amount: number;                // Treatment cost in ₹
   isPaid: boolean;               // Payment status
-  paymentMode?: 'cash' | 'upi' | 'card';
+  paymentMode?: 'cash' | 'upi';
   paymentDate?: timestamp;       // When payment was received
   sessionNotes?: string;         // Treatment notes after completion
   prescriptions?: {
@@ -109,6 +109,21 @@ Stores all appointment records.
   nextFollowUpDate?: string;     // YYYY-MM-DD
   attachments?: string[];        // URLs to X-rays, reports, etc.
   notes?: string;                // General notes
+  
+  // Package-related fields (optional - only for package sessions)
+  packageId?: string;            // Reference to treatmentPackages collection
+  sessionNumber?: number;        // e.g., 5 (Session 5 of 20)
+  isPackageSession?: boolean;    // true if part of a package
+  isPrePaid?: boolean;           // true if payment already received via package
+  originalAmount?: number;       // Store original amount for records
+  
+  // Flexibility tracking (for rescheduling)
+  wasRescheduled?: boolean;      // Track if modified from original plan
+  originalDoctorId?: string;     // If doctor was changed
+  originalDate?: string;         // If date was changed
+  originalTime?: string;         // If time was changed
+  reschedulingReason?: string;   // Reason for changes
+  
   createdAt: timestamp;
   updatedAt: timestamp;
   createdBy: string;             // doctorId who created the appointment
@@ -120,8 +135,11 @@ Stores all appointment records.
 - `doctorId` (to get all appointments for a doctor)
 - `date` (for daily schedules)
 - `status` (to filter by appointment status)
+- `packageId` (to get all appointments for a package)
+- `isPackageSession` (to filter package vs single appointments)
 - Composite: `doctorId + date` (for doctor's daily schedule)
 - Composite: `date + status` (for pending appointments on a date)
+- Composite: `packageId + status` (for package session tracking)
 
 ---
 
@@ -131,14 +149,14 @@ Separate collection for detailed payment tracking and reports.
 ```typescript
 {
   id: string;                    // Auto-generated unique ID
-  appointmentId: string;         // Reference to appointments
+  appointmentId?: string;        // Reference to appointments (null for package payments)
   patientId: string;             // Reference to patients
   patientName: string;           // Denormalized
   doctorId: string;              // Reference to doctors
   doctorName: string;            // Denormalized
   amount: number;                // Total amount
-  paymentMode: 'cash' | 'upi' | 'card';
-  transactionId?: string;        // For UPI/card payments
+  paymentMode: 'cash' | 'upi';
+  transactionId?: string;        // For UPI payments
   commissionRate: number;        // Doctor's commission % at time of payment
   commissionAmount: number;      // Calculated commission
   netAmount: number;             // Amount after deducting commission
@@ -148,6 +166,12 @@ Separate collection for detailed payment tracking and reports.
   refundAmount?: number;         // If any refund given
   refundDate?: timestamp;
   refundReason?: string;
+  
+  // Package-related fields
+  paymentType: 'single' | 'package' | 'package_balance';  // Type of payment
+  packageId?: string;            // Reference to treatmentPackages (if package payment)
+  sessionsIncluded?: number;     // Number of sessions this payment covers
+  
   createdAt: timestamp;
   updatedAt: timestamp;
 }
@@ -155,13 +179,73 @@ Separate collection for detailed payment tracking and reports.
 
 **Indexes:**
 - `appointmentId`
+- `packageId` (for package payment tracking)
+- `paymentType` (to distinguish single vs package payments)
 - `doctorId + paymentDate` (for doctor earnings reports)
 - `paymentDate` (for monthly/yearly reports)
 - `paymentMode` (to track payment method preferences)
 
 ---
 
-### 5. **medicalRecords** (Optional - Future Enhancement)
+### 5. **treatmentPackages**
+Stores treatment packages with advance/prepaid sessions.
+
+```typescript
+{
+  id: string;                    // Auto-generated unique ID
+  patientId: string;             // Reference to patients collection
+  patientName: string;           // Denormalized for quick access
+  packageName: string;           // "Post Surgery Rehab - 20 Sessions"
+  
+  // Session tracking
+  totalSessions: number;         // 10, 20, or 30 sessions
+  completedSessions: number;     // Number of sessions completed
+  remainingSessions: number;     // totalSessions - completedSessions
+  
+  // Financial details
+  totalAmount: number;           // Total package cost in ₹
+  amountPaid: number;            // Amount already paid
+  amountPending: number;         // Balance remaining
+  pricePerSession: number;       // totalAmount / totalSessions
+  paymentMode: 'cash' | 'upi';   // Actual payment method used
+  isPartialPayment: boolean;     // True if not fully paid upfront
+  paymentDate: timestamp;        // Initial payment date
+  transactionId?: string;        // For UPI payments
+  
+  // Treatment details
+  treatmentType: string;         // "Physiotherapy", "Rehabilitation", etc.
+  
+  // Default scheduling preferences (can be overridden per appointment)
+  defaultDoctorId: string;       // Default doctor for sessions
+  defaultDoctorName: string;     // Denormalized
+  defaultTime?: string;          // Preferred time slot (HH:MM)
+  
+  // Status and validity
+  status: 'active' | 'completed' | 'cancelled' | 'expired';
+  startDate: string;             // Package start date (YYYY-MM-DD)
+  expiryDate?: string;           // Optional validity period (YYYY-MM-DD)
+  
+  // Linked appointments (for tracking)
+  appointmentIds: string[];      // Array of appointment IDs linked to this package
+  
+  notes?: string;                // General notes about the package
+  createdAt: timestamp;
+  updatedAt: timestamp;
+  createdBy: string;             // doctorId who created the package
+}
+```
+
+**Indexes:**
+- `patientId` (to get all packages for a patient)
+- `status` (to filter active/completed packages)
+- `defaultDoctorId` (to get packages by doctor)
+- `expiryDate` (to find expiring packages)
+- Composite: `patientId + status` (for active patient packages)
+- Composite: `status + expiryDate` (for expiry alerts)
+
+---
+
+### 6. **medicalRecords** (Optional - Future Enhancement)
 Detailed medical history per appointment.
 
 ```typescript
@@ -200,7 +284,7 @@ Detailed medical history per appointment.
 
 ---
 
-### 6. **notifications** (Optional - Future Enhancement)
+### 7. **notifications** (Optional - Future Enhancement)
 For appointment reminders and notifications.
 
 ```typescript
@@ -226,7 +310,10 @@ For appointment reminders and notifications.
 ```
 doctors (1) ----< (many) appointments
 patients (1) ----< (many) appointments
-appointments (1) ----< (1) payments
+patients (1) ----< (many) treatmentPackages
+treatmentPackages (1) ----< (many) appointments
+appointments (1) ----< (0..1) payments  // 0 for prepaid sessions
+treatmentPackages (1) ----< (1..*) payments  // 1 or more for partial payments
 doctors (1) ----< (many) payments
 patients (1) ----< (many) medicalRecords
 appointments (1) ----< (1) medicalRecords
@@ -323,6 +410,32 @@ db.collection('payments')
   .where('doctorId', '==', doctorId)
   .where('paymentDate', '>=', startOfMonth)
   .where('paymentDate', '<=', endOfMonth)
+  .get()
+```
+
+### Get active packages for a patient
+```javascript
+db.collection('treatmentPackages')
+  .where('patientId', '==', patientId)
+  .where('status', '==', 'active')
+  .get()
+```
+
+### Get all appointments for a package
+```javascript
+db.collection('appointments')
+  .where('packageId', '==', packageId)
+  .orderBy('date', 'asc')
+  .get()
+```
+
+### Check if patient has active package for treatment type
+```javascript
+db.collection('treatmentPackages')
+  .where('patientId', '==', patientId)
+  .where('status', '==', 'active')
+  .where('treatmentType', '==', treatmentType)
+  .where('remainingSessions', '>', 0)
   .get()
 ```
 
